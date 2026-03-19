@@ -10,21 +10,21 @@
 
 void UAsyncLineTrace::Activate()
 {
-	WorldContextObject = InputData.WorldContextObject;
+	WeakWorldContextObject = InputData.WorldContextObject;
 
 	if (!bValidityCheck())
 	{
 		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("Can't start Async Line Trace"));
-		OnExitedAsyncTrace.Broadcast();
+		ExitAsyncTraceTask();
 		return;
 	}
 
 	bTraceInProgress = true;
-	CurrentTraceIndex = 0;
 	OutHits.Empty();
-	TraceCompletedDelegate.BindUObject(this, &UAsyncLineTrace::OnTraceCompleted);
-
-	OnActivatedAsyncTrace.Broadcast();
+	PendingTraceCount = InputData.StartAndEndLocations.Num();
+	DebugTraces.Empty();
+	
+	StartAsyncTraceTask();
 }
 
 void UAsyncLineTrace::CancelAsyncLineTrace()
@@ -33,17 +33,175 @@ void UAsyncLineTrace::CancelAsyncLineTrace()
 	bCalledCancel = true;
 }
 
+void UAsyncLineTrace::StartAsyncTraceTask()
+{
+	if (!WeakWorldContextObject.IsValid())
+		return;
+	UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WeakWorldContextObject.Get());
+	if (!subsystem)
+	{
+		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("Subsystem not valid"));
+		ExitAsyncTraceTask();
+		return;
+	}
+	if (InputData.StartAndEndLocations.IsEmpty())
+	{
+		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("No input data provided"));
+		ExitAsyncTraceTask();
+		return;
+	}	
+	subsystem->RegisterAsyncLineTrace(this);
+	PerformAsyncTraces();
+}
+
+void UAsyncLineTrace::PerformAsyncTraces()
+{
+	UWorld* world = WeakWorldContextObject.Get()->GetWorld();
+	if (!IsValid(world))
+	{
+		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("World not valid"));
+		ExitAsyncTraceTask();
+		return;
+	}
+	FCollisionQueryParams params;
+	params.bTraceComplex = InputData.bTraceComplex;
+	params.AddIgnoredActors(InputData.ActorsToIgnore);
+	
+	FCollisionObjectQueryParams objectTypes;
+	if (TraceType == ObjectType)
+		for (const TEnumAsByte<EObjectTypeQuery>& objectTypeToAdd : ObjectTypes)
+			objectTypes.AddObjectTypesToQuery(UEngineTypes::ConvertToCollisionChannel(objectTypeToAdd));
+	
+	for (int32 i = 0; i < InputData.StartAndEndLocations.Num(); ++i)
+	{
+		FVector start;
+		FVector end;
+		GetCurrentTraceLocations(InputData.StartAndEndLocations[i], start, end);
+		DebugTraces.Add(FTraceStartStopVectors(start, end));
+		
+		FTraceDelegate traceDelegate;
+		traceDelegate.BindUObject(this, &UAsyncLineTrace::OnAsyncTraceCompleted);
+		
+		switch (TraceType)
+		{
+		case Channel:
+			world->AsyncLineTraceByChannel(TraceOutput, start, end, CollisionChannel, params,
+		FCollisionResponseParams::DefaultResponseParam, &traceDelegate);
+			break;
+			
+		case Profile:
+			world->AsyncLineTraceByProfile(TraceOutput, start, end, CollisionProfile, params
+		, &traceDelegate);
+			break;
+			
+		case ObjectType:
+			world->AsyncLineTraceByObjectType(TraceOutput, start, end, objectTypes, params
+		, &traceDelegate);
+			break;
+			
+		default:
+			checkNoEntry()
+			break;
+		}
+	}
+}
+
+void UAsyncLineTrace::GetCurrentTraceLocations(const FTraceStartStopVectors& InVectors, FVector& OutStart,
+                                               FVector& OutEnd) const
+{
+	if (IsValid(InputData.TraceOrginActor))
+	{
+		OutStart = InputData.TraceOrginActor->GetActorLocation();
+		OutEnd = OutStart + InVectors.EndLocation;
+	}
+	else
+	{
+		OutStart = InVectors.StartLocation;
+		OutEnd = InVectors.EndLocation;
+	}
+}
+
+void UAsyncLineTrace::OnAsyncTraceCompleted(const FTraceHandle& InHandle, FTraceDatum& InData)
+{
+	if (bCalledCancel)
+	{
+		ASYNC_TRACE_LOG(LogAsyncTrace, Warning, TEXT("Trace was cancelled"));
+		return;
+	}
+	if (!WeakWorldContextObject.IsValid())
+	{
+		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("World context invalid"));
+		return;
+	}
+
+	const UWorld* world = WeakWorldContextObject->GetWorld();
+	if (!world)
+	{
+		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("world context invalid"));
+		return;
+	}
+
+	if (!InData.OutHits.IsEmpty())
+	{
+		switch (TraceOutput)
+		{
+		case EAsyncTraceType::Single:
+			HandleSingleLineTrace(InData, world);
+			break;
+		case EAsyncTraceType::Multi:
+			HandleMultiLineTrace(InData, world);
+			break;
+		default:
+			checkNoEntry()
+		}
+	}
+
+	PendingTraceCount--;
+
+	if (PendingTraceCount <= 0)
+	{
+		// Debug draw
+		if (InputData.bDebugDraw && !DebugTraces.IsEmpty())
+			for (const FTraceStartStopVectors& trace : DebugTraces)
+				DrawDebugLine(world,
+					trace.StartLocation,
+					trace.EndLocation,
+					InputData.TraceColor.ToFColor(true),
+					false,
+					InputData.DrawTime,
+					0,
+					2.0f);
+		ExitAsyncTraceTask();
+	}
+}
+
+void UAsyncLineTrace::ExitAsyncTraceTask()
+{
+	if (WeakWorldContextObject.IsValid())
+		if (UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WeakWorldContextObject.Get()))
+			subsystem->UnregisterAsyncLineTrace(this);
+	
+	OnCompleted.Broadcast(OutHits);
+	bTraceInProgress = false;
+}
+
 bool UAsyncLineTrace::bValidityCheck() const
 {
-	if (!InputData.WorldContextObject)
+	if (!IsValid(InputData.WorldContextObject))
 	{
 		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("Invalid world context object"));
 		return false;
 	}
 
-	if (!WorldContextObject->GetWorld())
+	if (!InputData.WorldContextObject->GetWorld())
 	{
 		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("Invalid world"));
+		return false;
+	}
+	
+	if (!WeakWorldContextObject.IsValid())
+	{
+		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("Invalid weak ptr"));
 		return false;
 	}
 
@@ -60,49 +218,27 @@ bool UAsyncLineTrace::bValidityCheck() const
 	return true;
 }
 
-void UAsyncLineTrace::ConvertTraceType(ETraceTypeCustom InCustomType)
+void UAsyncLineTrace::ConvertTraceType(ETraceOutput InCustomType)
 {
 	switch (InCustomType)
 	{
-	case ETraceTypeCustom::Single:
-		TraceType = EAsyncTraceType::Single;
+	case ETraceOutput::Single:
+		TraceOutput = EAsyncTraceType::Single;
 		break;
-	case ETraceTypeCustom::Multi:
-		TraceType = EAsyncTraceType::Multi;
+	case ETraceOutput::Multi:
+		TraceOutput = EAsyncTraceType::Multi;
 		break;
 	default:
-		TraceType = EAsyncTraceType::Single;
+		TraceOutput = EAsyncTraceType::Single;
 		break;
-	}
-}
-
-void UAsyncLineTrace::SetCurrentTraceStartEnd()
-{
-	if (InputData.TraceOrginActor)
-	{
-		CurrentTraceStart = InputData.TraceOrginActor->GetActorLocation();
-		CurrentTraceEnd = CurrentTraceStart + InputData.StartAndEndLocations[CurrentTraceIndex].EndLocation;
-	}
-	else
-	{
-		CurrentTraceStart = InputData.StartAndEndLocations[CurrentTraceIndex].StartLocation;
-		CurrentTraceEnd = InputData.StartAndEndLocations[CurrentTraceIndex].EndLocation;
 	}
 }
 
 void UAsyncLineTrace::HandleSingleLineTrace(FTraceDatum& InData, const UWorld* World)
 {
-	const FHitResult hit = InData.OutHits[0];
+	const FHitResult& hit = InData.OutHits[0];
 	OutHits.Add(InData.OutHits[0]);
-
-	if (InputData.bPrintCurrentHitInfo)
-	{
-		DebugPrintHitInfo(hit);
-	}
-	if (InputData.bDebugDraw)
-	{
-		DrawDebugSphere(World, hit.Location, 5.f, 12, InputData.HitColor.ToFColor(true), false, InputData.DrawTime, 0, 5);
-	}
+	HandleDebugs(World, hit);	
 }
 
 void UAsyncLineTrace::HandleMultiLineTrace(const FTraceDatum& InData, const UWorld* World)
@@ -111,46 +247,16 @@ void UAsyncLineTrace::HandleMultiLineTrace(const FTraceDatum& InData, const UWor
 	for (const FHitResult& hit : currentHits)
 	{
 		OutHits.Add(hit);
-		if (InputData.bPrintCurrentHitInfo)
-		{
-			DebugPrintHitInfo(hit);
-		}
-		if (InputData.bDebugDraw)
-		{
-			DrawDebugSphere(World, hit.Location, 5.f, 12, InputData.HitColor.ToFColor(true), false, InputData.DrawTime, 0, 5);
-		}
+		HandleDebugs(World, hit);
 	}
 }
 
-void UAsyncLineTrace::OnTraceCompleted(const FTraceHandle& InHandle, FTraceDatum& InData)
+void UAsyncLineTrace::HandleDebugs(const UWorld* InWorld, const FHitResult& InHitResult) const
 {
-	const UWorld* world = WorldContextObject->GetWorld();
-	if (world)
-	{
-		if (InputData.bDebugDraw)
-		{
-			DrawDebugLine(world, CurrentTraceStart, CurrentTraceEnd,
-				InputData.TraceColor.ToFColor(true), false, InputData.DrawTime, NULL, 2.0f);
-		}
-		if (!InData.OutHits.IsEmpty())
-		{
-			switch (TraceType)
-			{
-			case EAsyncTraceType::Single:
-				HandleSingleLineTrace(InData, world);
-				break;
-			case EAsyncTraceType::Multi:
-				HandleMultiLineTrace(InData, world);
-				break;
-			default:
-				HandleSingleLineTrace(InData, world);
-				break;
-			}
-
-		}
-	}
-
-	OnRequestedAsyncTrace.Broadcast();
+	if (InputData.bPrintCurrentHitInfo)
+		DebugPrintHitInfo(InHitResult);
+	if (InputData.bDebugDraw)
+		DrawDebugSphere(InWorld, InHitResult.Location, 5.f, 12, InputData.HitColor.ToFColor(true), false, InputData.DrawTime, 0, 5);
 }
 
 void UAsyncLineTrace::DebugPrintHitInfo(const FHitResult& InHit)
@@ -160,93 +266,20 @@ void UAsyncLineTrace::DebugPrintHitInfo(const FHitResult& InHit)
 	ASYNC_TRACE_LOG(LogAsyncTrace, Log, TEXT("Hit Actor: %s at Location: %s"), *actorName, *hitLocation.ToString());
 }
 
-#pragma region
-
-UAsyncLineTraceChannel* UAsyncLineTraceChannel::AsyncLineTraceChannel(TEnumAsByte<ETraceTypeCustom> InTraceType, ECollisionChannel InChannel, const FAsyncTraceInputData InData)
+UAsyncLineTraceChannel* UAsyncLineTraceChannel::AsyncLineTraceChannel(TEnumAsByte<ETraceOutput> InTraceType, ECollisionChannel InChannel, const FAsyncTraceInputData InData)
 {
 	UAsyncLineTraceChannel* Node = NewObject<UAsyncLineTraceChannel>();
 
 	Node->ConvertTraceType(InTraceType);
 	Node->CollisionChannel = InChannel;
 	Node->InputData = InData;
-
 	Node->CurrentTraceID = InData.TraceID;
-
-	Node->OnActivatedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceChannel::StartLineTraceChannel);
-	Node->OnRequestedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceChannel::RequestLineTraceChannel);
-	Node->OnExitedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceChannel::ExitLineTraceChannel);
+	Node->TraceType = Channel;
+	
 	return Node;
 }
 
-void UAsyncLineTraceChannel::StartLineTraceChannel()
-{
-	UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WorldContextObject);
-	if (!subsystem)
-	{
-		ExitLineTraceChannel();
-		return;
-	}
-	subsystem->RegisterAsyncLineTrace(this);
-	ProcessLineTraceChannel();
-}
-
-FTraceHandle UAsyncLineTraceChannel::ProcessLineTraceChannel()
-{
-	if (!WorldContextObject)
-	{
-		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("Invalid world context object"));
-		ExitLineTraceChannel();
-		return CurrentTraceHandle;
-	}
-
-	UWorld* world = WorldContextObject->GetWorld();
-	if (!world)
-	{
-		ASYNC_TRACE_LOG(LogAsyncTrace, Error, TEXT("Invalid world"));
-		ExitLineTraceChannel();
-		return CurrentTraceHandle;
-	}
-
-	FCollisionQueryParams params;
-	params.bTraceComplex = InputData.bTraceComplex;
-	params.AddIgnoredActors(InputData.ActorsToIgnore);
-
-	SetCurrentTraceStartEnd();
-
-	CurrentTraceHandle = world->AsyncLineTraceByChannel(TraceType, CurrentTraceStart, CurrentTraceEnd, CollisionChannel, params,
-		FCollisionResponseParams::DefaultResponseParam, &TraceCompletedDelegate);
-
-	return CurrentTraceHandle;
-}
-
-void UAsyncLineTraceChannel::RequestLineTraceChannel()
-{
-	++CurrentTraceIndex;
-	if (CurrentTraceIndex < InputData.StartAndEndLocations.Num() && !bCalledCancel)
-	{
-		ProcessLineTraceChannel();
-	}
-	else
-	{
-		ExitLineTraceChannel();
-	}
-}
-
-void UAsyncLineTraceChannel::ExitLineTraceChannel()
-{
-	if (UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WorldContextObject))
-	{
-		subsystem->UnregisterAsyncLineTrace(this);
-	}
-
-	Completed.Broadcast(OutHits);
-	bTraceInProgress = false;
-}
-#pragma endregion //channel trace
-
-#pragma region
-
-UAsyncLineTraceProfile* UAsyncLineTraceProfile::AsyncLineTraceProfile(TEnumAsByte<ETraceTypeCustom> InTraceType,
+UAsyncLineTraceProfile* UAsyncLineTraceProfile::AsyncLineTraceProfile(TEnumAsByte<ETraceOutput> InTraceType,
 	FName InCollisionProfile, const FAsyncTraceInputData InData)
 {
 	UAsyncLineTraceProfile* Node = NewObject<UAsyncLineTraceProfile>();
@@ -254,85 +287,13 @@ UAsyncLineTraceProfile* UAsyncLineTraceProfile::AsyncLineTraceProfile(TEnumAsByt
 	Node->ConvertTraceType(InTraceType);
 	Node->CollisionProfile = InCollisionProfile;
 	Node->InputData = InData;
-
 	Node->CurrentTraceID = InData.TraceID;
-
-	Node->OnActivatedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceProfile::StartLineTraceProfile);
-	Node->OnRequestedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceProfile::RequestLineTraceProfile);
-	Node->OnExitedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceProfile::ExitLineTraceProfile);
+	Node->TraceType = Profile;
+	
 	return Node;
 }
 
-void UAsyncLineTraceProfile::StartLineTraceProfile()
-{
-	UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WorldContextObject);
-	if (!subsystem)
-	{
-		ExitLineTraceProfile();
-		return;
-	}
-	subsystem->RegisterAsyncLineTrace(this);
-	ProcessLineTraceProfile();
-}
-
-FTraceHandle UAsyncLineTraceProfile::ProcessLineTraceProfile()
-{
-	if (!WorldContextObject)
-	{
-		//log message
-		ExitLineTraceProfile();
-		return CurrentTraceHandle;
-	}
-
-	UWorld* world = WorldContextObject->GetWorld();
-	if (!world)
-	{
-		//log message
-		ExitLineTraceProfile();
-		return CurrentTraceHandle;
-	}
-
-	FCollisionQueryParams params;
-	params.bTraceComplex = InputData.bTraceComplex;
-	params.AddIgnoredActors(InputData.ActorsToIgnore);
-
-	SetCurrentTraceStartEnd();
-
-	CurrentTraceHandle = world->AsyncLineTraceByProfile(TraceType, CurrentTraceStart, CurrentTraceEnd, CollisionProfile, params
-		, &TraceCompletedDelegate);
-
-	return CurrentTraceHandle;
-}
-
-void UAsyncLineTraceProfile::RequestLineTraceProfile()
-{
-	++CurrentTraceIndex;
-	if (CurrentTraceIndex < InputData.StartAndEndLocations.Num() && !bCalledCancel)
-	{
-		ProcessLineTraceProfile();
-	}
-	else
-	{
-		ExitLineTraceProfile();
-	}
-}
-
-void UAsyncLineTraceProfile::ExitLineTraceProfile()
-{
-	if (UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WorldContextObject))
-	{
-		subsystem->UnregisterAsyncLineTrace(this);
-	}
-
-	Completed.Broadcast(OutHits);
-	bTraceInProgress = false;
-}
-
-#pragma endregion //profile trace
-
-#pragma region
-
-UAsyncLineTraceObjects* UAsyncLineTraceObjects::AsyncLineTraceObjects(TEnumAsByte<ETraceTypeCustom> InTraceType,
+UAsyncLineTraceObjects* UAsyncLineTraceObjects::AsyncLineTraceObjects(TEnumAsByte<ETraceOutput> InTraceType,
 	TArray<TEnumAsByte<EObjectTypeQuery>> InObjectTypes, const FAsyncTraceInputData InData)
 {
 	UAsyncLineTraceObjects* Node = NewObject<UAsyncLineTraceObjects>();
@@ -340,86 +301,8 @@ UAsyncLineTraceObjects* UAsyncLineTraceObjects::AsyncLineTraceObjects(TEnumAsByt
 	Node->ConvertTraceType(InTraceType);
 	Node->ObjectTypes = InObjectTypes;
 	Node->InputData = InData;
-
 	Node->CurrentTraceID = InData.TraceID;
-
-	Node->OnActivatedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceObjects::StartLineTraceObjects);
-	Node->OnRequestedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceObjects::RequestLineTraceObjects);
-	Node->OnExitedAsyncTrace.AddDynamic(Node, &UAsyncLineTraceObjects::ExitLineTraceObjects);
+	Node->TraceType = ObjectType;
+	
 	return Node;
 }
-
-void UAsyncLineTraceObjects::StartLineTraceObjects()
-{
-	UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WorldContextObject);
-	if (!subsystem)
-	{
-		ExitLineTraceObjects();
-		return;
-	}
-	subsystem->RegisterAsyncLineTrace(this);
-	ProcessLineTraceObjects();
-}
-
-FTraceHandle UAsyncLineTraceObjects::ProcessLineTraceObjects()
-{
-	if (!WorldContextObject)
-	{
-		//log message
-		ExitLineTraceObjects();
-		return CurrentTraceHandle;
-	}
-
-	UWorld* world = WorldContextObject->GetWorld();
-	if (!world)
-	{
-		//log message
-		ExitLineTraceObjects();
-		return CurrentTraceHandle;
-	}
-
-	FCollisionQueryParams params;
-	params.bTraceComplex = InputData.bTraceComplex;
-	params.AddIgnoredActors(InputData.ActorsToIgnore);
-
-	FCollisionObjectQueryParams objectTypes;
-
-	for (const TEnumAsByte<EObjectTypeQuery>& objectTypeToAdd : ObjectTypes)
-	{
-		objectTypes.AddObjectTypesToQuery(UEngineTypes::ConvertToCollisionChannel(objectTypeToAdd));
-	}
-
-	SetCurrentTraceStartEnd();
-
-	CurrentTraceHandle = world->AsyncLineTraceByObjectType(TraceType, CurrentTraceStart, CurrentTraceEnd, objectTypes, params
-		, &TraceCompletedDelegate);
-
-	return CurrentTraceHandle;
-}
-
-void UAsyncLineTraceObjects::RequestLineTraceObjects()
-{
-	++CurrentTraceIndex;
-	if (CurrentTraceIndex < InputData.StartAndEndLocations.Num() && !bCalledCancel)
-	{
-		ProcessLineTraceObjects();
-	}
-	else
-	{
-		ExitLineTraceObjects();
-	}
-}
-
-void UAsyncLineTraceObjects::ExitLineTraceObjects()
-{
-	if (UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WorldContextObject))
-	{
-		subsystem->UnregisterAsyncLineTrace(this);
-	}
-
-	Completed.Broadcast(OutHits);
-	bTraceInProgress = false;
-}
-
-
-#pragma endregion //object trace

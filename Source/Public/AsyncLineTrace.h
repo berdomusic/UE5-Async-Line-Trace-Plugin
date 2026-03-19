@@ -10,10 +10,17 @@
 #pragma region
 // Using custom enum because EAsyncTraceType is not blueprint exposed by default
 UENUM(BlueprintType)
-enum ETraceTypeCustom : uint8
+enum ETraceOutput : uint8
 {
 	Single UMETA(DisplayName = "Single Trace"),
 	Multi UMETA(DisplayName = "Multi Trace")
+};
+
+enum ETraceType : uint8
+{
+	Channel,
+	Profile,
+	ObjectType
 };
 
 USTRUCT(BlueprintType)
@@ -69,31 +76,19 @@ struct FAsyncTraceInputData
 };
 
 #pragma endregion // Structs, enums
-/**
- *
- */
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FActivateAsyncTrace);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FRequestAsyncTrace);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FExitAsyncTrace);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FLineTraceHitsCompleted, const TArray<FHitResult>&, OutHits);
 
-/**
- *
- */
 UCLASS()
 class ASYNCLINETRACEPLUGIN_API UAsyncLineTrace : public UBlueprintAsyncActionBase
 {
 	GENERATED_BODY()
 
 public:
-
 	bool operator==(const UAsyncLineTrace& Other) const
 	{
 		return this == &Other;
-	}
-
-	virtual void Activate() override;
+	}	
 
 	FName CurrentTraceID = "";
 	TArray<FHitResult> OutHits;
@@ -101,46 +96,44 @@ public:
 	void CancelAsyncLineTrace();
 
 protected:
-
+	// Using custom enum because EAsyncTraceType is not blueprint exposed by default
+	void ConvertTraceType(ETraceOutput InCustomType);
+	EAsyncTraceType TraceOutput;
+	
+	FAsyncTraceInputData InputData;
+	ETraceType TraceType = ETraceType::Channel;	
+	
+	ECollisionChannel CollisionChannel;
+	FName CollisionProfile;
+	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+	
+private:	
+	virtual void Activate() override;
+	UFUNCTION()
+	void StartAsyncTraceTask();
+	void PerformAsyncTraces();
+	void GetCurrentTraceLocations(const FTraceStartStopVectors& InVectors, FVector& OutStart, FVector& OutEnd) const;
+	void OnAsyncTraceCompleted(const FTraceHandle& InHandle, FTraceDatum& InData);
+	UFUNCTION()
+	void ExitAsyncTraceTask();
 	bool bTraceInProgress;
 	bool bCalledCancel;
-
-	FAsyncTraceInputData InputData;
-
-	//Delegates
-	FActivateAsyncTrace OnActivatedAsyncTrace;
-	FRequestAsyncTrace OnRequestedAsyncTrace;
-	FExitAsyncTrace OnExitedAsyncTrace;
-
-	FVector CurrentTraceStart;
-	FVector CurrentTraceEnd;
+	
+	FLineTraceHitsCompleted OnCompleted;	
+	int32 PendingTraceCount = 0;	
+	TArray<FTraceStartStopVectors> DebugTraces;
 
 	UPROPERTY()
-	const UObject* WorldContextObject;
-
-	int CurrentTraceIndex;
-
-	UFUNCTION()
-	bool bValidityCheck() const;
-
-	EAsyncTraceType TraceType;
-	void ConvertTraceType(ETraceTypeCustom InCustomType);
-
-	void SetCurrentTraceStartEnd();
+	TWeakObjectPtr<const UObject> WeakWorldContextObject;
+	
+	bool bValidityCheck() const;	
+	
 
 	void HandleSingleLineTrace(FTraceDatum& InData, const UWorld* World);
 	void HandleMultiLineTrace(const FTraceDatum& InData, const UWorld* World);
 
-	//Async trace interface
-	FTraceHandle CurrentTraceHandle;
-	void OnTraceCompleted(const FTraceHandle& InHandle, FTraceDatum& InData);
-
-	FTraceDelegate TraceCompletedDelegate;
-
+	void HandleDebugs(const UWorld* InWorld, const FHitResult& InHitResult) const;
 	static void DebugPrintHitInfo(const FHitResult& InHit);
-
-private:
-
 };
 
 UCLASS()
@@ -148,27 +141,9 @@ class ASYNCLINETRACEPLUGIN_API UAsyncLineTraceChannel : public UAsyncLineTrace
 {
 	GENERATED_BODY()
 
-private:
-
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true"), Category = "AsyncTrace")
-	static UAsyncLineTraceChannel* AsyncLineTraceChannel(TEnumAsByte<ETraceTypeCustom> InTraceType,
+	static UAsyncLineTraceChannel* AsyncLineTraceChannel(TEnumAsByte<ETraceOutput> InTraceType,
 		ECollisionChannel InChannel, const FAsyncTraceInputData InData);
-
-	UFUNCTION()
-	void StartLineTraceChannel();
-
-	FTraceHandle ProcessLineTraceChannel();
-
-	UFUNCTION()
-	void RequestLineTraceChannel();
-
-	UFUNCTION()
-	void ExitLineTraceChannel();
-
-	UPROPERTY(BlueprintAssignable)
-	FLineTraceHitsCompleted Completed;
-
-	ECollisionChannel CollisionChannel;
 };
 
 UCLASS()
@@ -176,27 +151,9 @@ class ASYNCLINETRACEPLUGIN_API UAsyncLineTraceProfile : public UAsyncLineTrace
 {
 	GENERATED_BODY()
 
-private:
-
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true"), Category = "AsyncTrace")
-	static UAsyncLineTraceProfile* AsyncLineTraceProfile(TEnumAsByte<ETraceTypeCustom> InTraceType,
+	static UAsyncLineTraceProfile* AsyncLineTraceProfile(TEnumAsByte<ETraceOutput> InTraceType,
 		FName InCollisionProfile, const FAsyncTraceInputData InData);
-
-	UFUNCTION()
-	void StartLineTraceProfile();
-
-	FTraceHandle ProcessLineTraceProfile();
-
-	UFUNCTION()
-	void RequestLineTraceProfile();
-
-	UFUNCTION()
-	void ExitLineTraceProfile();
-
-	UPROPERTY(BlueprintAssignable)
-	FLineTraceHitsCompleted Completed;
-
-	FName CollisionProfile;
 };
 
 UCLASS()
@@ -204,25 +161,7 @@ class ASYNCLINETRACEPLUGIN_API UAsyncLineTraceObjects : public UAsyncLineTrace
 {
 	GENERATED_BODY()
 
-private:
-
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true"), Category = "AsyncTrace")
-	static UAsyncLineTraceObjects* AsyncLineTraceObjects(TEnumAsByte<ETraceTypeCustom> InTraceType,
+	static UAsyncLineTraceObjects* AsyncLineTraceObjects(TEnumAsByte<ETraceOutput> InTraceType,
 		TArray<TEnumAsByte<EObjectTypeQuery>> InObjectTypes, const FAsyncTraceInputData InData);
-
-	UFUNCTION()
-	void StartLineTraceObjects();
-
-	FTraceHandle ProcessLineTraceObjects();
-
-	UFUNCTION()
-	void RequestLineTraceObjects();
-
-	UFUNCTION()
-	void ExitLineTraceObjects();
-
-	UPROPERTY(BlueprintAssignable)
-	FLineTraceHitsCompleted Completed;
-
-	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
 };
