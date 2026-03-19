@@ -115,6 +115,7 @@ protected:
 	FVector CurrentTraceStart;
 	FVector CurrentTraceEnd;
 
+	UPROPERTY()
 	const UObject* WorldContextObject;
 
 	int CurrentTraceIndex;

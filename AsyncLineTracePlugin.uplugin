@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "AsyncLineTracePlugin",
+	"Description": "Async Line Trace",
+	"Category": "Other",
+	"CreatedBy": "Berdo Music Michal Cywinski",
+	"CreatedByURL": "berdo-music.pl/en/",
+	"DocsURL": "https://docs.google.com/document/d/1zL65AmYVen_3i6UDhzv6FD1jOXCHpJGoI3eBk2SCEu8/edit",
+	"MarketplaceURL": "",
+	"SupportURL": "berdo-music.pl/en/contact/",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "AsyncLineTracePlugin",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
