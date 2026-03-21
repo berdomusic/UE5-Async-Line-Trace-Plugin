@@ -31,6 +31,7 @@ void UAsyncLineTrace::CancelAsyncLineTrace()
 {
 	ASYNC_TRACE_LOG(LogAsyncTrace, Warning, TEXT("Async LineTrace cancelled"));
 	bCalledCancel = true;
+	ExitAsyncTraceTask();
 }
 
 void UAsyncLineTrace::StartAsyncTraceTask()
@@ -183,6 +184,7 @@ void UAsyncLineTrace::ExitAsyncTraceTask()
 	
 	OnCompleted.Broadcast(OutHits);
 	bTraceInProgress = false;
+	MarkAsGarbage();
 }
 
 bool UAsyncLineTrace::bValidityCheck() const
