@@ -49,8 +49,8 @@ void UAsyncTraceSubsystem::GetActiveAsyncLineTraces(TArray<UAsyncLineTrace*>& Ou
 	Cleanup();
 	OutTraces.Reset();
 
-	for (const TWeakObjectPtr<UAsyncLineTrace>& WeakTrace : ActiveAsyncLineTraces)
-		if (UAsyncLineTrace* Trace = WeakTrace.Get())
+	for (const TWeakObjectPtr<UAsyncLineTrace>& weakTrace : ActiveAsyncLineTraces)
+		if (UAsyncLineTrace* Trace = weakTrace.Get())
 			OutTraces.Add(Trace);
 }
 
@@ -75,5 +75,6 @@ void UAsyncTraceSubsystem::Cleanup()
 		{
 			return !ptr.IsValid();
 		});
+		ActiveAsyncLineTraces.Shrink();
 	}
 }

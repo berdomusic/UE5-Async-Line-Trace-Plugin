@@ -96,13 +96,13 @@ void UAsyncLineTrace::PerformAsyncTraces()
 			break;
 			
 		case Profile:
-			world->AsyncLineTraceByProfile(TraceOutput, start, end, CollisionProfile, params
-		, &traceDelegate);
+			world->AsyncLineTraceByProfile(TraceOutput, start, end, CollisionProfile, params,
+				&traceDelegate);
 			break;
 			
 		case ObjectType:
-			world->AsyncLineTraceByObjectType(TraceOutput, start, end, objectTypes, params
-		, &traceDelegate);
+			world->AsyncLineTraceByObjectType(TraceOutput, start, end, objectTypes, params, 
+				&traceDelegate);
 			break;
 			
 		default:
