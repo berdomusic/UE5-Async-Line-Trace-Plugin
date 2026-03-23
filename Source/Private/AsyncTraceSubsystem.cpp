@@ -15,41 +15,65 @@ UAsyncTraceSubsystem* UAsyncTraceSubsystem::Get(const UObject* InWorldContextObj
 	return nullptr;
 }
 
-
-void UAsyncTraceSubsystem::RegisterAsyncLineTrace(UAsyncLineTrace* InTrace)
-{
-	if (InTrace)
-		ActiveAsyncLineTraces.AddUnique(InTrace);
-}
-
-void UAsyncTraceSubsystem::UnregisterAsyncLineTrace(UAsyncLineTrace* InTrace)
-{
-	if (InTrace && ActiveAsyncLineTraces.Contains(InTrace))
-		ActiveAsyncLineTraces.Remove(InTrace);
-}
-
 TArray<FHitResult> UAsyncTraceSubsystem::GetCurrentHitsByID(FName InID)
 {
+	Cleanup();
 	TArray<FHitResult> currentHits;
 
-	for (auto const asyncTrace : ActiveAsyncLineTraces)
-		if (asyncTrace)
-			if (asyncTrace->CurrentTraceID == InID)
-				currentHits.Append(asyncTrace->OutHits);
+	for (const TWeakObjectPtr<UAsyncLineTrace>& weakTrace : ActiveAsyncLineTraces)
+		if (UAsyncLineTrace* trace = weakTrace.Get())
+			if (trace->CurrentTraceID == InID)
+				currentHits.Append(trace->OutHits);
 	return currentHits;
 }
 
 void UAsyncTraceSubsystem::CancelAsyncLineTracesByID(FName InIDToCancel)
 {
-	for (auto const asyncTrace : ActiveAsyncLineTraces)
-		if (asyncTrace)
-			if (asyncTrace->CurrentTraceID == InIDToCancel)
-				asyncTrace->CancelAsyncLineTrace();
+	Cleanup();
+	for (const TWeakObjectPtr<UAsyncLineTrace>& weakTrace : ActiveAsyncLineTraces)
+		if (UAsyncLineTrace* trace = weakTrace.Get())
+			if (trace->CurrentTraceID == InIDToCancel)
+				trace->CancelAsyncLineTrace();
 }
 
 void UAsyncTraceSubsystem::CancelAllAsyncLineTraces()
 {
-	for (auto const asyncTrace : ActiveAsyncLineTraces)
-		if (asyncTrace)
-			asyncTrace->CancelAsyncLineTrace();
+	Cleanup();
+	for (const TWeakObjectPtr<UAsyncLineTrace>& weakTrace : ActiveAsyncLineTraces)
+		if (UAsyncLineTrace* trace = weakTrace.Get())
+			trace->CancelAsyncLineTrace();
+}
+
+void UAsyncTraceSubsystem::GetActiveAsyncLineTraces(TArray<UAsyncLineTrace*>& OutTraces)
+{
+	Cleanup();
+	OutTraces.Reset();
+
+	for (const TWeakObjectPtr<UAsyncLineTrace>& WeakTrace : ActiveAsyncLineTraces)
+		if (UAsyncLineTrace* Trace = WeakTrace.Get())
+			OutTraces.Add(Trace);
+}
+
+void UAsyncTraceSubsystem::RegisterAsyncLineTrace(UAsyncLineTrace* InTrace)
+{
+	if (InTrace)
+		if (!ActiveAsyncLineTraces.Contains(InTrace))
+			ActiveAsyncLineTraces.Add(InTrace);
+}
+
+void UAsyncTraceSubsystem::UnregisterAsyncLineTrace(UAsyncLineTrace* InTrace)
+{
+	if (InTrace)
+		ActiveAsyncLineTraces.Remove(InTrace);
+}
+
+void UAsyncTraceSubsystem::Cleanup()
+{
+	if (!ActiveAsyncLineTraces.IsEmpty())
+	{
+		ActiveAsyncLineTraces.RemoveAll([](const TWeakObjectPtr<UAsyncLineTrace>& ptr)
+		{
+			return !ptr.IsValid();
+		});
+	}
 }

@@ -81,8 +81,13 @@ void UAsyncLineTrace::PerformAsyncTraces()
 		DebugTraces.Add(FTraceStartStopVectors(start, end));
 		
 		FTraceDelegate traceDelegate;
-		traceDelegate.BindUObject(this, &UAsyncLineTrace::OnAsyncTraceCompleted);
-		
+		traceDelegate.BindWeakLambda(this,
+	[WeakThis = TWeakObjectPtr<UAsyncLineTrace>(this)]
+		(const FTraceHandle& Handle, FTraceDatum& Data)
+{
+	if (!WeakThis.IsValid()) return;
+	WeakThis->OnAsyncTraceCompleted(Handle, Data);
+});
 		switch (TraceType)
 		{
 		case Channel:
@@ -184,7 +189,7 @@ void UAsyncLineTrace::ExitAsyncTraceTask()
 	
 	OnCompleted.Broadcast(OutHits);
 	bTraceInProgress = false;
-	MarkAsGarbage();
+	SetReadyToDestroy();
 }
 
 bool UAsyncLineTrace::bValidityCheck() const
@@ -263,7 +268,10 @@ void UAsyncLineTrace::HandleDebugs(const UWorld* InWorld, const FHitResult& InHi
 
 void UAsyncLineTrace::DebugPrintHitInfo(const FHitResult& InHit)
 {
-	const FString actorName = InHit.GetActor()->GetActorNameOrLabel();
+	AActor* actor = InHit.GetActor();
+	if (!IsValid(actor))
+		return;	
+	const FString actorName = actor->GetActorNameOrLabel();
 	const FVector hitLocation = InHit.ImpactPoint;
 	ASYNC_TRACE_LOG(LogAsyncTrace, Log, TEXT("Hit Actor: %s at Location: %s"), *actorName, *hitLocation.ToString());
 }

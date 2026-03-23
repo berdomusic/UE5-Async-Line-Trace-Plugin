@@ -26,20 +26,19 @@ class ASYNCLINETRACEPLUGIN_API UAsyncTraceSubsystem : public UWorldSubsystem
 public:
 
 	static UAsyncTraceSubsystem* Get(const UObject* InWorldContextObject);
+	
+	UFUNCTION(BlueprintCallable, Category = "AsyncLineTrace")
+	TArray<FHitResult> GetCurrentHitsByID(FName InID);
+	UFUNCTION(BlueprintCallable, Category = "AsyncLineTrace")
+	void CancelAsyncLineTracesByID(FName InIDToCancel);
+	UFUNCTION(BlueprintCallable, Category = "AsyncLineTrace")
+	void CancelAllAsyncLineTraces();
+	UFUNCTION(BlueprintPure, Category = "AsyncLineTrace")
+	void GetActiveAsyncLineTraces(TArray<UAsyncLineTrace*>& OutTraces);
 
 	void RegisterAsyncLineTrace(UAsyncLineTrace* InTrace);
 	void UnregisterAsyncLineTrace(UAsyncLineTrace* InTrace);
-
-	UFUNCTION(BlueprintCallable, Category = "AsyncLineTrace")
-	TArray<FHitResult> GetCurrentHitsByID(FName InID);
-
-	UFUNCTION(BlueprintCallable, Category = "AsyncLineTrace")
-	void CancelAsyncLineTracesByID(FName InIDToCancel);
-
-	UFUNCTION(BlueprintCallable, Category = "AsyncLineTrace")
-	void CancelAllAsyncLineTraces();
-
-	UPROPERTY(BlueprintReadOnly, Category = "AsyncLineTrace")
-	TArray<UAsyncLineTrace*> ActiveAsyncLineTraces;
-
+private:
+	void Cleanup();
+	TArray<TWeakObjectPtr<UAsyncLineTrace>> ActiveAsyncLineTraces;
 };
