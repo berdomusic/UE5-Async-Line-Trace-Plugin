@@ -92,7 +92,10 @@ public:
 
 	FName CurrentTraceID = "";
 	TArray<FHitResult> OutHits;
-
+	
+	UPROPERTY(BlueprintAssignable, Category = "AsyncTrace")
+	FLineTraceHitsCompleted OnCompleted;
+	
 	void CancelAsyncLineTrace();
 
 protected:
@@ -114,12 +117,11 @@ private:
 	void PerformAsyncTraces();
 	void GetCurrentTraceLocations(const FTraceStartStopVectors& InVectors, FVector& OutStart, FVector& OutEnd) const;
 	void OnAsyncTraceCompleted(const FTraceHandle& InHandle, FTraceDatum& InData);
-	UFUNCTION()
 	void ExitAsyncTraceTask();
+	
 	bool bTraceInProgress;
 	bool bCalledCancel;
 	
-	FLineTraceHitsCompleted OnCompleted;	
 	int32 PendingTraceCount = 0;	
 	TArray<FTraceStartStopVectors> DebugTraces;
 
@@ -127,7 +129,6 @@ private:
 	TWeakObjectPtr<const UObject> WeakWorldContextObject;
 	
 	bool bValidityCheck() const;	
-	
 
 	void HandleSingleLineTrace(FTraceDatum& InData, const UWorld* World);
 	void HandleMultiLineTrace(const FTraceDatum& InData, const UWorld* World);

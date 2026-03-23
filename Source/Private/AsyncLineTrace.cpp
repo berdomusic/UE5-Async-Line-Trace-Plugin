@@ -183,12 +183,11 @@ void UAsyncLineTrace::OnAsyncTraceCompleted(const FTraceHandle& InHandle, FTrace
 
 void UAsyncLineTrace::ExitAsyncTraceTask()
 {
+	bTraceInProgress = false;
 	if (WeakWorldContextObject.IsValid())
 		if (UAsyncTraceSubsystem* subsystem = UAsyncTraceSubsystem::Get(WeakWorldContextObject.Get()))
 			subsystem->UnregisterAsyncLineTrace(this);
-	
-	OnCompleted.Broadcast(OutHits);
-	bTraceInProgress = false;
+	OnCompleted.Broadcast(OutHits);	
 	SetReadyToDestroy();
 }
 
@@ -290,7 +289,7 @@ UAsyncLineTraceChannel* UAsyncLineTraceChannel::AsyncLineTraceChannel(TEnumAsByt
 }
 
 UAsyncLineTraceProfile* UAsyncLineTraceProfile::AsyncLineTraceProfile(TEnumAsByte<ETraceOutput> InTraceType,
-	FName InCollisionProfile, const FAsyncTraceInputData InData)
+                                                                      FName InCollisionProfile, const FAsyncTraceInputData InData)
 {
 	UAsyncLineTraceProfile* Node = NewObject<UAsyncLineTraceProfile>();
 
