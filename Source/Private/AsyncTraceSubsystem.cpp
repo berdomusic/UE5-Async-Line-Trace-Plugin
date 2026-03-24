@@ -61,10 +61,15 @@ void UAsyncTraceSubsystem::RegisterAsyncLineTrace(UAsyncLineTrace* InTrace)
 			ActiveAsyncLineTraces.Add(InTrace);
 }
 
-void UAsyncTraceSubsystem::UnregisterAsyncLineTrace(UAsyncLineTrace* InTrace)
+void UAsyncTraceSubsystem::UnregisterAsyncLineTrace(const UAsyncLineTrace* InTrace)
 {
 	if (InTrace)
-		ActiveAsyncLineTraces.Remove(InTrace);
+		for (int32 i = 0; i < ActiveAsyncLineTraces.Num(); ++i)
+			if (ActiveAsyncLineTraces[i].Get() == InTrace)
+			{
+				ActiveAsyncLineTraces.RemoveAt(i);
+				break;
+			}
 }
 
 void UAsyncTraceSubsystem::Cleanup()

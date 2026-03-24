@@ -37,7 +37,7 @@ public:
 	void GetActiveAsyncLineTraces(TArray<UAsyncLineTrace*>& OutTraces);
 
 	void RegisterAsyncLineTrace(UAsyncLineTrace* InTrace);
-	void UnregisterAsyncLineTrace(UAsyncLineTrace* InTrace);
+	void UnregisterAsyncLineTrace(const UAsyncLineTrace* InTrace);
 private:
 	void Cleanup();
 	TArray<TWeakObjectPtr<UAsyncLineTrace>> ActiveAsyncLineTraces;
