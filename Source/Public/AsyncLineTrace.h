@@ -32,11 +32,15 @@ struct FTraceStartStopVectors
 	FVector StartLocation = FVector::ZeroVector;
 	UPROPERTY(BlueprintReadWrite, Category = "AsyncLineTrace")
 	FVector EndLocation = FVector::ZeroVector;
-
-	bool operator==(FTraceStartStopVectors OtherVectors) const
-	{
-		return StartLocation == OtherVectors.StartLocation && EndLocation == OtherVectors.EndLocation;
-	}
+	
+	FTraceStartStopVectors()
+		: StartLocation(FVector::ZeroVector)
+		, EndLocation(FVector::ZeroVector)
+	{}
+	
+	FTraceStartStopVectors(const FVector& InStart, const FVector& InEnd)
+		: StartLocation(InStart), EndLocation(InEnd)
+	{}
 
 	bool operator==(const FTraceStartStopVectors& OtherVectors) const
 	{

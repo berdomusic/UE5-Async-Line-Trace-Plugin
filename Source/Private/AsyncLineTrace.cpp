@@ -158,7 +158,8 @@ void UAsyncLineTrace::OnAsyncTraceCompleted(const FTraceHandle& InHandle, FTrace
 			HandleMultiLineTrace(InData, world);
 			break;
 		default:
-			checkNoEntry()
+			checkNoEntry();
+			break;
 		}
 	}
 
